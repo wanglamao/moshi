@@ -363,15 +363,22 @@ class LMModel(StreamingContainer):
         transformer_out, text_logits = self.forward_text(delayed_codes[:, :, :-1], sum_condition, cross_attention_src)
         assert transformer_out.shape[0] == delayed_codes.shape[0]
         assert transformer_out.shape[1] == delayed_codes.shape[2] - 1
-        logits = self.forward_depformer_training(delayed_codes[:, :, 1:], transformer_out)
 
-        # map back the logits on pattern sequence to logits on original codes: [B, K, S, card] -> [B, K, T, card]
-        # and provide the corresponding mask over invalid positions of tokens. We will with NaN values invalid positions
-        # to ensure they properly handled.
-        logits, logits_mask = _undelay_sequence(
-            self.delays[self.audio_offset:self.audio_offset + self.dep_q],
-            logits, fill_value=float('NaN'))
-        logits_mask &= (codes[:, self.audio_offset: self.audio_offset + self.dep_q] != self.zero_token_id)
+        # STT models have dep_q=0, skip depformer
+        if self.dep_q > 0:
+            logits = self.forward_depformer_training(delayed_codes[:, :, 1:], transformer_out)
+
+            # map back the logits on pattern sequence to logits on original codes: [B, K, S, card] -> [B, K, T, card]
+            # and provide the corresponding mask over invalid positions of tokens. We will with NaN values invalid positions
+            # to ensure they properly handled.
+            logits, logits_mask = _undelay_sequence(
+                self.delays[self.audio_offset:self.audio_offset + self.dep_q],
+                logits, fill_value=float('NaN'))
+            logits_mask &= (codes[:, self.audio_offset: self.audio_offset + self.dep_q] != self.zero_token_id)
+        else:
+            logits = None
+            logits_mask = None
+
         text_logits, text_logits_mask = _undelay_sequence(self.delays[:1], text_logits, fill_value=float('NaN'))
         text_logits_mask &= (codes[:, :1] != self.zero_token_id)
         return LMOutput(logits, logits_mask, text_logits, text_logits_mask)
